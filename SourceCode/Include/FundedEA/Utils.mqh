@@ -62,7 +62,8 @@ enum ENUM_FIRM_PRESET
    FIRM_APEX         = 2,
    FIRM_MYFUNDEDFX   = 3,
    FIRM_MFF          = 4,
-   FIRM_CUSTOM       = 5
+   FIRM_BLUEGUARDIAN = 5,
+   FIRM_CUSTOM       = 6
 };
 
 //--- Session state
@@ -864,6 +865,7 @@ string FirmToString(ENUM_FIRM_PRESET firm)
       case FIRM_APEX:       return "Apex";
       case FIRM_MYFUNDEDFX: return "MyFundedFx";
       case FIRM_MFF:        return "MFF";
+      case FIRM_BLUEGUARDIAN: return "BlueGuardian";
       case FIRM_CUSTOM:     return "Custom";
       default:              return "Unknown";
    }

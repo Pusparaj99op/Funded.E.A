@@ -6,7 +6,8 @@
 //| Purpose: Contains verified rule profiles for popular funded      |
 //|          firms. When the user selects a FirmPreset, the EA       |
 //|          auto-loads the firm's specific rules without manual      |
-//|          entry. Supports: FTMO, The5ers, Apex, MyFundedFx, MFF  |
+//|          entry. Supports: FTMO, The5ers, Apex, MyFundedFx, MFF,  |
+//|          BlueGuardian                                            |
 //+------------------------------------------------------------------+
 #ifndef FIRM_PRESETS_MQH
 #define FIRM_PRESETS_MQH
@@ -50,8 +51,9 @@ public:
          case FIRM_APEX:       LoadApex(rules); break;
          case FIRM_MYFUNDEDFX: LoadMyFundedFx(rules); break;
          case FIRM_MFF:        LoadMFF(rules); break;
+         case FIRM_BLUEGUARDIAN: LoadBlueGuardian(rules); break;
          case FIRM_CUSTOM:     LoadCustom(rules); break;
-         default:              LoadFTMO(rules); break;
+         default:              LoadBlueGuardian(rules); break;
       }
       
       m_log.Info(StringFormat("Firm preset loaded: %s", rules.FirmName));
@@ -183,6 +185,28 @@ private:
       // All values use defaults from Reset()
       // User will override via input parameters in the main EA
       m_log.Info("Custom preset loaded. Using user-supplied input parameters.");
+   }
+   
+   //+------------------------------------------------------------------+
+   //| BlueGuardian Instant Funded Rules                                  |
+   //| Source: blueguardian.com (verified April 2026)                    |
+   //| Account type: Instant Starter                                     |
+   //| Notable: NO profit target, INDEFINITE trading period,             |
+   //|          already live funded (no evaluation phases)               |
+   //+------------------------------------------------------------------+
+   void LoadBlueGuardian(SFirmRules &rules)
+   {
+      rules.FirmName = "BlueGuardian";
+      rules.ProfitTargetPct_Phase1 = 0.0;    // NO profit target (instant funded)
+      rules.ProfitTargetPct_Phase2 = 0.0;    // NO profit target
+      rules.MaxDailyDrawdownPct = 3.0;       // 3% daily max loss ($150 on $5K)
+      rules.MaxTotalDrawdownPct = 5.0;        // 5% total max loss ($250 on $5K)
+      rules.MinTradingDays = 0;               // No minimum trading days
+      rules.TotalChallengeDays = 999;         // Indefinite trading period
+      rules.ConsistencyRule = false;          // No consistency rule
+      rules.MaxSingleDayProfitPct = 100.0;   // No single-day cap
+      rules.NewsRestriction = false;          // No mandatory news restriction
+      rules.WeekendHoldingAllowed = false;    // Close before weekend (recommended)
    }
 };
 

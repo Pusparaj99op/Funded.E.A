@@ -1,0 +1,61 @@
+; Funded.E.A v2.0.0 - BlueGuardian Instant Starter Preset
+; ────────────────────────────────────────────────────────
+; Firm: BlueGuardian (blueguardian.com)
+; Account Type: Instant Starter (Instant Funded)
+; Balance: $5,000 | Leverage: 1:30 Max
+; ────────────────────────────────────────────────────────
+; RULES (verified April 2026):
+;   Trading Period:      Indefinite
+;   Maximum Daily Loss:  $150 (3%)
+;   Maximum Loss:        $250 (5%)
+;   Profit Target:       NONE (already funded)
+;   Phase:               Live Funded (no evaluation)
+; ────────────────────────────────────────────────────────
+; BEHAVIOR:
+;   - No profit target to chase = pure capital preservation
+;   - Engine targets sustainable 0.3%/day ($15/day)
+;   - Never enters ACCELERATED mode (no deadline)
+;   - Only BALANCED or CONSERVATIVE modes active
+;   - Ultra-conservative DD management on tight 3%/5% limits
+;   - Expected max lot ~0.04-0.06 per trade at 1:30 leverage
+; ────────────────────────────────────────────────────────
+
+; ═══════ Challenge Parameters ═══════
+InpAccountSize=5000.0
+InpFirmPreset=5
+InpProfitTargetPct=0.0
+InpMaxDailyDrawdownPct=3.0
+InpMaxTotalDrawdownPct=5.0
+InpMinTradingDays=0
+InpTotalChallengeDays=999
+InpCurrentPhase=2
+InpConsistencyRuleEnabled=false
+InpMaxSingleDayProfitPct=100.0
+
+; ═══════ Advanced Overrides ═══════
+InpForceRiskPerTrade=0.0
+InpForceMaxTradesPerDay=0
+InpDisableAcceleratedMode=true
+InpMagicNumber=205001
+InpMaxSlippagePips=3
+
+; ═══════ Session Settings ═══════
+InpTradeLondon=true
+InpTradeNewYork=true
+InpTradeAsian=false
+InpAvoidNewsEvents=true
+InpNewsBufferMinutes=30
+InpCloseAllOnFriday=true
+InpFridayCloseHourGMT=20
+InpServerTimezoneOffset=2
+
+; ═══════ Execution & Cost Settings ═══════
+InpMaxAllowedSpreadPoints=30
+InpCommissionPerLotRT=0.0
+InpAvoidWednesdayOvernight=true
+InpMaxAllowedSwapPerTrade=3.0
+
+; ═══════ Dashboard Settings ═══════
+InpShowDashboard=true
+InpDashboardCorner=1
+InpDashboardFontSize=10

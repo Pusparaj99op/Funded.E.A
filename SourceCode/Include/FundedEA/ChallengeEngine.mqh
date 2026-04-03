@@ -102,7 +102,12 @@ public:
       
       // For LiveFunded, use Phase2 target as a rolling target or set to a conservative % 
       if(phase == PHASE_LIVE_FUNDED)
-         m_profitTargetPct = firmRules.ProfitTargetPct_Phase2;
+      {
+         if(firmRules.ProfitTargetPct_Phase2 > 0)
+            m_profitTargetPct = firmRules.ProfitTargetPct_Phase2;
+         else
+            m_profitTargetPct = 0; // No target (e.g., BlueGuardian Instant Funded)
+      }
       
       m_log.Info(StringFormat("Engine initialized. Phase: %s | Target: %.1f%% | Firm: %s",
                  PhaseToString(phase), m_profitTargetPct, firmRules.FirmName));
@@ -170,13 +175,22 @@ private:
    //+------------------------------------------------------------------+
    void ComputeChallengeMetrics(SEngineState &state)
    {
-      // Profit target in dollar terms
+      // Profit target in dollar terms (0 = no target, e.g. BlueGuardian Instant Funded)
       state.ProfitTargetAmount = state.InitialBalance * m_profitTargetPct / 100.0;
       
       // Current progress
       state.ProfitSoFar = state.CurrentBalance - state.InitialBalance;
-      state.ProfitRemaining = state.ProfitTargetAmount - state.ProfitSoFar;
-      if(state.ProfitRemaining < 0) state.ProfitRemaining = 0;
+      
+      // When there is no profit target, ProfitRemaining stays 0 (no chase)
+      if(state.ProfitTargetAmount > 0)
+      {
+         state.ProfitRemaining = state.ProfitTargetAmount - state.ProfitSoFar;
+         if(state.ProfitRemaining < 0) state.ProfitRemaining = 0;
+      }
+      else
+      {
+         state.ProfitRemaining = 0;
+      }
       
       // Drawdown limits in dollar terms
       state.DailyDDLimit = state.InitialBalance * m_firmRules.MaxDailyDrawdownPct / 100.0;
@@ -203,6 +217,17 @@ private:
    //+------------------------------------------------------------------+
    void ComputeRequiredDailyProfit(SEngineState &state)
    {
+      // === Handle NO PROFIT TARGET (e.g., BlueGuardian Instant Funded) ===
+      // When there is no target, we set a sustainable daily goal:
+      // Aim for 0.3% of balance per day ($15/day on $5K) — conservative, sustainable
+      if(m_profitTargetPct <= 0 || state.ProfitTargetAmount <= 0)
+      {
+         state.RequiredDailyProfit = state.CurrentBalance * 0.003; // 0.3% daily goal
+         m_log.Debug(StringFormat("No profit target mode (funded). DailyGoal: $%.2f (0.3%% of balance)",
+                     state.RequiredDailyProfit));
+         return;
+      }
+      
       int daysRemaining = MathMax(state.TradingDaysRemaining, 1);
       
       state.RequiredDailyProfit = state.ProfitRemaining / (double)daysRemaining;
@@ -382,9 +407,13 @@ private:
    //+------------------------------------------------------------------+
    void DetermineAggressivenessLevel(SEngineState &state)
    {
-      double profitProgress = CMathUtils::SafeDiv(state.ProfitSoFar, state.ProfitTargetAmount, 0.0);
       double dailyDDPct = CMathUtils::SafeDiv(state.DailyDDUsedToday, state.DailyDDLimit, 0.0);
       double totalDDPct = CMathUtils::SafeDiv(state.TotalDDUsed, state.TotalDDLimit, 0.0);
+      
+      // Profit progress (handles no-target case: returns 0 when no target)
+      double profitProgress = 0;
+      if(state.ProfitTargetAmount > 0)
+         profitProgress = CMathUtils::SafeDiv(state.ProfitSoFar, state.ProfitTargetAmount, 0.0);
       
       ENUM_AGGRESSIVENESS_LEVEL previousLevel = state.AggressivenessLevel;
       
@@ -405,11 +434,30 @@ private:
          return;
       }
       
-      // Profit target exceeded
-      if(state.ProfitSoFar >= state.ProfitTargetAmount)
+      // Profit target exceeded (only when there IS a target)
+      if(state.ProfitTargetAmount > 0 && state.ProfitSoFar >= state.ProfitTargetAmount)
       {
          state.AggressivenessLevel = AGG_PAUSED;
          m_log.Engine("Mode -> PAUSED (Challenge target reached!)");
+         return;
+      }
+      
+      //--- No-target funded accounts: only BALANCED or CONSERVATIVE ---
+      if(m_profitTargetPct <= 0)
+      {
+         // In funded mode with no target, stay conservative if DD is getting used
+         if(totalDDPct >= 0.40 || dailyDDPct >= 0.50)
+         {
+            state.AggressivenessLevel = AGG_CONSERVATIVE;
+            m_log.Engine(StringFormat("Mode -> CONSERVATIVE (Funded, TotalDD=%.1f%%, DailyDD=%.1f%%)",
+                         totalDDPct * 100, dailyDDPct * 100));
+         }
+         else
+         {
+            state.AggressivenessLevel = AGG_BALANCED;
+            if(previousLevel != AGG_BALANCED)
+               m_log.Engine("Mode -> BALANCED (Funded, sustainable mode)");
+         }
          return;
       }
       
@@ -507,6 +555,15 @@ private:
    //+------------------------------------------------------------------+
    void ComputePaceStatus(SEngineState &state)
    {
+      // === Handle NO PROFIT TARGET (funded mode) ===
+      // With no target, pace is always "ON TRACK" — there's nothing to fall behind on
+      if(m_profitTargetPct <= 0 || state.ProfitTargetAmount <= 0)
+      {
+         m_paceRatio = 1.0;
+         state.PaceStatus = (state.ProfitSoFar > 0) ? PACE_AHEAD : PACE_ON_TRACK;
+         return;
+      }
+      
       // Calculate pace ratio
       double profitProgress = CMathUtils::SafeDiv(state.ProfitSoFar, state.ProfitTargetAmount, 0.0);
       
