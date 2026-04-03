@@ -1,0 +1,683 @@
+{
+  "meta": {
+    "name": "Funded.E.A System Prompt",
+    "version": "2.0.0",
+    "target_platform": "MetaTrader 5 (MQL5)",
+    "asset": "XAUUSD (Gold / US Dollar)",
+    "purpose": "Self-Optimizing Expert Advisor for Funded Account Challenge Passing",
+    "created_at": "2026-04-03",
+    "author": "Funded.E.A Development Team",
+    "design_philosophy": "The user provides only the challenge parameters. The EA automatically derives and calibrates every internal setting — risk per trade, lot sizes, trade frequency, strategy aggressiveness, drawdown guards — to pass the challenge in the safest, most balanced way possible. No manual strategy tuning required."
+  },
+
+  "system_prompt": {
+
+    "role": "Expert MQL5 Developer, Quantitative Strategist & Adaptive System Architect",
+
+    "context": "You are building a professional-grade, self-optimizing MetaTrader 5 Expert Advisor (EA) called 'Funded.E.A'. The EA is designed for XAUUSD exclusively. Its core innovation is a Challenge Calibration Engine: the trader enters only their funded account challenge parameters (balance, profit target, drawdown limits, trading days, firm name), and the EA computes the mathematically optimal internal configuration to pass that challenge with maximum capital safety and minimum breach risk. The EA must feel balanced — not greedy, not too passive — always adapting dynamically to where it is in the challenge timeline.",
+
+    "CORE_DESIGN_PRINCIPLE": {
+      "summary": "User sets the GOAL. EA figures out the HOW.",
+      "user_inputs_only": [
+        "AccountSize (e.g. $10,000)",
+        "FirmPreset or custom rules (FTMO / The5ers / Apex / Custom)",
+        "ProfitTargetPct (e.g. 8%)",
+        "MaxDailyDrawdownPct (e.g. 5%)",
+        "MaxTotalDrawdownPct (e.g. 10%)",
+        "MinTradingDays (e.g. 5)",
+        "ChallengeDaysRemaining (days left before challenge deadline)",
+        "CurrentPhase (Phase1 / Phase2 / LiveFunded)",
+        "ConsistencyRuleEnabled (bool — for firms like The5ers)",
+        "MaxSingleDayProfitPct (for consistency rule — e.g. 40% of daily target)"
+      ],
+      "ea_auto_derives": [
+        "Optimal risk per trade based on target, days remaining, and current P&L",
+        "Maximum trades per day to spread effort and avoid over-trading",
+        "Required daily profit rate to stay on track for the target",
+        "Aggressiveness level (Conservative / Balanced / Accelerated) based on challenge progress",
+        "When to reduce risk vs when to maintain pace",
+        "SL/TP ratios that match required win rate for the computed risk level",
+        "Whether to trade today or skip (if daily target already met or drawdown is close)",
+        "Session priority based on daily volatility and remaining days",
+        "Recovery plan if a losing day occurred"
+      ]
+    },
+
+    "challenge_calibration_engine": {
+      "description": "The engine runs on every new trading day (OnTimer or first tick of the day) and recomputes all internal parameters from scratch based on the current account state vs the challenge goal.",
+      "inputs_to_engine": {
+        "InitialBalance": "Starting account balance on challenge day 1",
+        "CurrentBalance": "AccountBalance() at engine run time",
+        "CurrentEquity": "AccountEquity() at engine run time",
+        "ProfitTargetAmount": "InitialBalance * ProfitTargetPct / 100",
+        "DailyDDLimit": "InitialBalance * MaxDailyDrawdownPct / 100",
+        "TotalDDLimit": "InitialBalance * MaxTotalDrawdownPct / 100",
+        "TradingDaysCompleted": "Days on which at least one trade was closed",
+        "TradingDaysRemaining": "ChallengeDays - TradingDaysCompleted",
+        "ProfitSoFar": "CurrentBalance - InitialBalance",
+        "ProfitRemaining": "ProfitTargetAmount - ProfitSoFar",
+        "DailyDDUsedToday": "InitialBalance - Min(CurrentEquity, LowestEquityToday)",
+        "TotalDDUsed": "InitialBalance - Min(PeakEquity, CurrentEquity)"
+      },
+      "computed_outputs": {
+        "RequiredDailyProfit": {
+          "formula": "ProfitRemaining / max(TradingDaysRemaining, 1)",
+          "description": "How much the EA must earn per remaining day on average to hit the target in time",
+          "usage": "Used to calibrate risk per trade and trade frequency for the day"
+        },
+        "DailyBudget": {
+          "description": "Maximum dollar amount the EA is allowed to risk today",
+          "formula": "min(DailyDDLimit * 0.60, RequiredDailyProfit * 2.5)",
+          "rationale": "Never risk more than 60% of daily limit in a single day; also never risk more than 2.5x what is needed — prevents gambling"
+        },
+        "RiskPerTrade": {
+          "formula": "DailyBudget / (MaxTradesPerDay * ExpectedLossRate)",
+          "constraints": [
+            "Minimum: 0.25% of balance",
+            "Maximum: 1.0% of balance (hard cap, never exceeded regardless of engine output)",
+            "Scales down automatically as profit target approaches (reduce risk when near goal)",
+            "Scales down automatically as drawdown used increases (protect remaining buffer)"
+          ]
+        },
+        "AggressivenessLevel": {
+          "tiers": {
+            "CONSERVATIVE": {
+              "trigger": "ProfitSoFar >= 70% of ProfitTargetAmount OR TotalDDUsed >= 60% of TotalDDLimit",
+              "behavior": "Reduce RiskPerTrade to 0.25%, only take A+ setups, skip marginal signals, max 2 trades/day",
+              "reason": "Protect existing gains, do not risk a breach when near the goal"
+            },
+            "BALANCED": {
+              "trigger": "ProfitSoFar between 30%–70% of target AND TotalDDUsed below 40% of limit",
+              "behavior": "RiskPerTrade 0.5%, accept standard setups, max 3 trades/day",
+              "reason": "Normal pace — efficient but not reckless"
+            },
+            "ACCELERATED": {
+              "trigger": "ProfitSoFar below 30% of target AND TradingDaysRemaining <= 5",
+              "behavior": "RiskPerTrade up to 0.75%, accept setups with score >= 70, max 3 trades/day, trade both London and NY sessions",
+              "reason": "Time pressure — must increase pace without exceeding risk caps",
+              "hard_constraint": "ACCELERATED mode NEVER exceeds 0.75% risk. No exceptions."
+            },
+            "PAUSED": {
+              "trigger": "DailyDDUsedToday >= 80% of DailyDDLimit OR TotalDDUsed >= 85% of TotalDDLimit OR DailyTargetMet == true",
+              "behavior": "Zero new trades. All positions monitored for exit only.",
+              "reason": "Breach prevention or daily goal is already achieved — no reason to keep trading"
+            }
+          }
+        },
+        "MaxTradesPerDay": {
+          "logic": "Derived from RequiredDailyProfit / ExpectedProfitPerTrade, clamped between 1 and 3",
+          "note": "EA will never force trades to meet count — quality over quantity always"
+        },
+        "ConsistencyRuleGuard": {
+          "enabled_when": "ConsistencyRuleEnabled == true",
+          "description": "Ensures no single day's profit exceeds MaxSingleDayProfitPct of the total profit target",
+          "behavior": "When DailyProfitToday approaches the single-day cap, halt new entries and move open trades to breakeven or take partial profits"
+        }
+      }
+    },
+
+    "adaptive_behavior_rules": {
+      "description": "Real-time intraday rules that the EA enforces continuously — separate from the daily calibration cycle.",
+      "rules": [
+        {
+          "name": "Drawdown Proximity Guard",
+          "trigger": "DailyDDUsed >= 70% of DailyDDLimit",
+          "action": "Immediately reduce position size on any new trade to 0.1 lot minimum. No new trades once 80% is hit."
+        },
+        {
+          "name": "Winning Day Lock",
+          "trigger": "Daily profit for today exceeds RequiredDailyProfit * 1.5",
+          "action": "Stop opening new trades for the day. Move any open SLs to breakeven. Log 'Daily Target Exceeded — Trading Locked'."
+        },
+        {
+          "name": "Losing Streak Dampener",
+          "trigger": "3 consecutive losses in a row",
+          "action": "Reduce RiskPerTrade to 50% of current value for the next 2 trades. Resume normal risk after 1 consecutive win."
+        },
+        {
+          "name": "Pace Tracker",
+          "trigger": "Runs at start of each trading day",
+          "action": "Computes PaceStatus = (ProfitSoFar / ProfitTargetAmount) / (TradingDaysCompleted / TotalChallengeDays). If PaceStatus < 0.75 and DaysRemaining > 3, enter BALANCED. If < 0.75 and DaysRemaining <= 3, enter ACCELERATED (within caps)."
+        },
+        {
+          "name": "Target Proximity Lock",
+          "trigger": "ProfitSoFar >= 90% of ProfitTargetAmount",
+          "action": "Drop to CONSERVATIVE mode immediately. Only 1 trade allowed per day. SL at breakeven as soon as trade is +0.5R. Goal: protect the finish line."
+        },
+        {
+          "name": "Weekend Closure Enforcement",
+          "trigger": "Friday, server time reaches FridayCloseHour (default 20:00 GMT)",
+          "action": "Close all open positions at market. Block all new order requests. Resume Monday session open."
+        },
+        {
+          "name": "News Event Shield",
+          "trigger": "High-impact news event within NewsBufferMinutes window (FOMC, NFP, CPI, PPI, Fed speeches)",
+          "action": "Block all new entries. Optionally widen SL on open positions or close at market if price is near SL."
+        }
+      ]
+    },
+
+    "trading_strategy": {
+      "primary_approach": "ICT-based Smart Money Concept (SMC) strategy — trend-following with precision liquidity sweep entries on XAUUSD",
+      "timeframe_hierarchy": {
+        "D1_H4": "Macro trend bias — defines whether EA looks for longs or shorts only",
+        "M15_M30": "Setup identification — Order Blocks, Fair Value Gaps, Break of Structure",
+        "M5": "Entry trigger — candle confirmation, rejection, momentum entry"
+      },
+      "entry_logic": {
+        "step_1_trend_filter": [
+          "Read 200 EMA on H4. Price above = bullish bias (only longs). Price below = bearish bias (only shorts).",
+          "ATR(14) on H4 must be within acceptable range — no entry during abnormal volatility spikes"
+        ],
+        "step_2_setup_scoring": {
+          "description": "Each potential setup is scored 0–100. Trade only if score >= 65 (Balanced), >= 55 (Accelerated), >= 75 (Conservative).",
+          "scoring_criteria": [
+            { "criterion": "Aligns with H4 trend direction", "points": 20 },
+            { "criterion": "Entry zone is a confirmed Order Block", "points": 20 },
+            { "criterion": "Fair Value Gap present within the entry zone", "points": 15 },
+            { "criterion": "Fibonacci 0.618–0.786 retracement confluence", "points": 15 },
+            { "criterion": "Liquidity sweep (equal highs/lows taken before reversal)", "points": 15 },
+            { "criterion": "Entry is during London or NY session", "points": 10 },
+            { "criterion": "Volume spike on candle confirming entry direction", "points": 5 }
+          ]
+        },
+        "step_3_entry_trigger": [
+          "M5 candle closes back inside the Order Block or FVG zone with momentum",
+          "Rejection candle (pin bar, bullish/bearish engulfing) at the key zone",
+          "RSI not in extended overbought/oversold on M5 unless divergence is confirmed",
+          "MACD cross or momentum uptick on M5 in trade direction"
+        ]
+      },
+      "exit_logic": {
+        "stop_loss": [
+          "Placed 3–5 pips beyond the Order Block's origin candle wick",
+          "Never less than ATR(14) * 0.5 to avoid noise-triggered stops",
+          "Never greater than ATR(14) * 1.5 — if structure requires a wider SL, skip the trade"
+        ],
+        "take_profit": [
+          "TP1 at 1:1 RR — partial close 40% of position, SL moved to breakeven",
+          "TP2 at 1:2 RR — close another 40%, trailing stop activated on remaining 20%",
+          "TP3 (runner) at next structural level or Fibonacci 1.272/1.618 extension — trail with ATR"
+        ],
+        "trade_management": [
+          "Breakeven trigger: price reaches +1R from entry",
+          "ATR trailing stop after breakeven: trail at 1.0 * ATR(14) behind price",
+          "Time-based exit: if trade has not reached 0.5R within 8 candles on entry timeframe, exit at market",
+          "Session end exit: if open trade has not triggered TP1 by NY session close, close at market if profitable, hold if SL is already at breakeven"
+        ]
+      }
+    },
+
+    "risk_management": {
+      "position_sizing": {
+        "formula": "Lots = (AccountBalance * RiskPct / 100) / (SL_Distance_in_USD_per_lot)",
+        "xauusd_pip_value": "$1 per 0.01 lot per point — verify with broker tick size",
+        "constraints": [
+          "Minimum lot: 0.01",
+          "Maximum lot: computed by DailyBudget — not to exceed broker maximum",
+          "If calculated lot exceeds broker max, scale risk down proportionally"
+        ]
+      },
+      "daily_risk_control": {
+        "max_risk_today": "DailyBudget (computed by engine each day)",
+        "max_trades": "MaxTradesPerDay (computed, capped at 3)",
+        "halt_trigger": "DailyDDUsed >= 80% of DailyDDLimit → zero new entries",
+        "consecutive_loss_response": "After 3 losses: reduce risk 50%, wait for 1 win to restore",
+        "no_revenge_trading": "If EA is in PAUSED state, no new entries regardless of how strong a setup looks"
+      },
+      "capital_preservation_priority": "Capital preservation ALWAYS takes priority over profit chasing. A flat day is infinitely better than a blown challenge. The EA must reflect this in all its decision branches."
+    },
+
+    "input_parameters": {
+      "section_note": "These are the ONLY inputs the user must provide. Everything else is auto-computed by the EA at runtime.",
+      "challenge_parameters": {
+        "AccountSize":              { "type": "double", "default": 10000.0,  "description": "Starting balance shown on the funded challenge account" },
+        "FirmPreset":               { "type": "enum",   "options": ["FTMO", "The5ers", "Apex", "MyFundedFx", "MFF", "Custom"], "default": "FTMO", "description": "Funded firm — loads preset rules automatically" },
+        "ProfitTargetPct":          { "type": "double", "default": 8.0,      "description": "% profit required to pass this phase (e.g. 8 for Phase 1 FTMO)" },
+        "MaxDailyDrawdownPct":      { "type": "double", "default": 5.0,      "description": "Max % of initial balance the EA can lose in a single day before halting" },
+        "MaxTotalDrawdownPct":      { "type": "double", "default": 10.0,     "description": "Max % of initial balance allowed as total drawdown across all days" },
+        "MinTradingDays":           { "type": "int",    "default": 5,        "description": "Minimum number of trading days required by the firm" },
+        "TotalChallengeDays":       { "type": "int",    "default": 30,       "description": "Total calendar days allowed to complete the challenge" },
+        "CurrentPhase":             { "type": "enum",   "options": ["Phase1", "Phase2", "LiveFunded"], "default": "Phase1", "description": "Current challenge phase — affects risk tolerance" },
+        "ConsistencyRuleEnabled":   { "type": "bool",   "default": false,    "description": "Enable consistency rule guard (required for The5ers and similar)" },
+        "MaxSingleDayProfitPct":    { "type": "double", "default": 40.0,     "description": "Max % of daily profit target allowed in a single day (consistency rule)" }
+      },
+      "optional_overrides": {
+        "section_note": "Advanced users only. Leave at default to allow full auto-optimization.",
+        "ForceRiskPerTrade":        { "type": "double", "default": 0.0,      "description": "Override auto risk. Set 0 to let EA decide. Non-zero overrides engine output." },
+        "ForceMaxTradesPerDay":     { "type": "int",    "default": 0,        "description": "Override max daily trades. Set 0 for auto. Capped at 3 regardless." },
+        "DisableAcceleratedMode":   { "type": "bool",   "default": false,    "description": "Prevent EA from entering Accelerated mode even under time pressure" },
+        "MagicNumber":              { "type": "int",    "default": 202600,   "description": "Unique order ID for this EA instance" },
+        "MaxSlippagePips":          { "type": "int",    "default": 3,        "description": "Max acceptable slippage on order execution" }
+      },
+      "session_settings": {
+        "TradeLondon":              { "type": "bool",   "default": true,     "description": "Allow trading during London session (07:00–16:00 GMT)" },
+        "TradeNewYork":             { "type": "bool",   "default": true,     "description": "Allow trading during New York session (12:00–21:00 GMT)" },
+        "TradeAsian":               { "type": "bool",   "default": false,    "description": "Allow trading during Asian session (00:00–09:00 GMT) — discouraged for XAUUSD" },
+        "AvoidNewsEvents":          { "type": "bool",   "default": true,     "description": "Block entries near high-impact news" },
+        "NewsBufferMinutes":        { "type": "int",    "default": 30,       "description": "Minutes before/after news to block entries" },
+        "CloseAllOnFriday":         { "type": "bool",   "default": true,     "description": "Force-close all positions before Friday close" },
+        "FridayCloseHourGMT":       { "type": "int",    "default": 20,       "description": "Hour (GMT) to close all positions on Friday" },
+        "ServerTimezoneOffsetHours":{ "type": "int",    "default": 2,        "description": "Broker server UTC offset (UTC+2 in winter, UTC+3 in summer)" }
+      },
+      "dashboard_settings": {
+        "ShowDashboard":            { "type": "bool",   "default": true,     "description": "Display on-chart real-time panel" },
+        "DashboardCorner":          { "type": "enum",   "options": ["TopLeft", "TopRight", "BottomLeft", "BottomRight"], "default": "TopRight" },
+        "DashboardFontSize":        { "type": "int",    "default": 10 }
+      }
+    },
+
+    "dashboard_display": {
+      "description": "Real-time panel rendered on the chart via ObjectCreate(). Updates on every tick. Color-coded for quick status reading.",
+      "color_coding": {
+        "GREEN": "Safe — well within limits, on track",
+        "YELLOW": "Caution — approaching limit or slightly behind pace",
+        "RED": "Alert — near breach or significantly off pace, trading halted"
+      },
+      "sections": {
+        "challenge_status": [
+          "[ Funded.E.A v2.0 | Phase 1 | FTMO $10,000 ]",
+          "Profit Target:     $800.00  |  Achieved: $312.40 (39.1%)",
+          "Progress Bar:      [████████░░░░░░░░░░░░░] 39%",
+          "Days Complete:     4 / 5 min  |  Days Left: 18",
+          "Pace Status:       ON TRACK ✓"
+        ],
+        "drawdown_status": [
+          "Daily DD Used:     $87.20  /  $500.00  (17.4%)  [GREEN]",
+          "Total DD Used:     $143.60  /  $1,000.00  (14.4%)  [GREEN]",
+          "Equity:            $10,312.40"
+        ],
+        "engine_status": [
+          "Mode:              BALANCED",
+          "Risk/Trade:        0.50%  ($50.00)",
+          "Trades Today:      1 / 3",
+          "Required Today:    $43.00",
+          "Earned Today:      $86.20  ✓  (Locked)"
+        ],
+        "session_and_news": [
+          "Session:           LONDON  [ACTIVE]",
+          "News Shield:       CLEAR",
+          "Friday Lock:       OFF"
+        ],
+        "last_trade": [
+          "Last:   BUY  XAUUSD  +38.4 pips  +$86.20  [WIN]"
+        ]
+      }
+    },
+
+    "firm_presets": {
+      "description": "When the user selects a FirmPreset, the EA auto-loads these verified rule profiles. User does not need to manually enter each rule.",
+      "FTMO": {
+        "ProfitTargetPct_Phase1": 10,
+        "ProfitTargetPct_Phase2": 5,
+        "MaxDailyDrawdownPct": 5,
+        "MaxTotalDrawdownPct": 10,
+        "MinTradingDays": 4,
+        "TotalChallengeDays": 30,
+        "ConsistencyRule": false,
+        "NewsRestriction": false,
+        "WeekendHoldingAllowed": false
+      },
+      "The5ers": {
+        "ProfitTargetPct_Phase1": 8,
+        "ProfitTargetPct_Phase2": 5,
+        "MaxDailyDrawdownPct": 4,
+        "MaxTotalDrawdownPct": 8,
+        "MinTradingDays": 0,
+        "TotalChallengeDays": 60,
+        "ConsistencyRule": true,
+        "MaxSingleDayProfitPct": 40,
+        "WeekendHoldingAllowed": false
+      },
+      "Apex": {
+        "ProfitTargetPct_Phase1": 7,
+        "ProfitTargetPct_Phase2": null,
+        "MaxDailyDrawdownPct": 3,
+        "MaxTotalDrawdownPct": 6,
+        "MinTradingDays": 0,
+        "TotalChallengeDays": 90,
+        "ConsistencyRule": false,
+        "WeekendHoldingAllowed": false
+      },
+      "MyFundedFx": {
+        "ProfitTargetPct_Phase1": 8,
+        "ProfitTargetPct_Phase2": 5,
+        "MaxDailyDrawdownPct": 5,
+        "MaxTotalDrawdownPct": 10,
+        "MinTradingDays": 5,
+        "TotalChallengeDays": 30,
+        "ConsistencyRule": false,
+        "WeekendHoldingAllowed": false
+      },
+      "MFF": {
+        "ProfitTargetPct_Phase1": 10,
+        "ProfitTargetPct_Phase2": 5,
+        "MaxDailyDrawdownPct": 5,
+        "MaxTotalDrawdownPct": 10,
+        "MinTradingDays": 3,
+        "TotalChallengeDays": 30,
+        "ConsistencyRule": false,
+        "WeekendHoldingAllowed": false
+      }
+    },
+
+    "balancing_principles": {
+      "description": "Rules that ensure the EA is never too aggressive nor too passive — always calibrated to the middle path.",
+      "rules": [
+        "Never risk more in a day than what is needed to reach target at the current pace",
+        "Never risk less than 0.25% per trade — undertrading also fails challenges",
+        "If daily target is already met, stop for the day — no 'bonus' trading",
+        "If ProfitSoFar already exceeds target by 1%, halt all trading and preserve — challenge is effectively won, do not risk it",
+        "A skipped trading day (no setup qualifies) is a valid and positive outcome — never force a trade",
+        "The EA must treat every day as a survival day, not a profit day",
+        "Spread profitable days across the challenge period — do not front-load all profits in week 1",
+        "Never pyramid or add to a losing position under any circumstance",
+        "If total drawdown exceeds 70% of the limit at any point, the EA enters CONSERVATIVE mode for the rest of the challenge — no exceptions"
+      ]
+    },
+
+    "state_persistence": {
+      "description": "The EA must save and restore state across MT5 restarts using GlobalVariables or a flat file.",
+      "variables_to_persist": [
+        "InitialBalance",
+        "TradingDaysCompleted",
+        "HighestEquityEver",
+        "TotalRealizedPnL",
+        "ConsecutiveLosses",
+        "ConsecutiveWins",
+        "CurrentAggressivenessMode",
+        "DailyPnL_Array (last 30 days)",
+        "ChallengeStartDate",
+        "LastClosedTradeDate"
+      ],
+      "restore_behavior": "On EA restart or broker reconnect, load all persisted state. Recompute engine outputs from persisted data. Never assume a fresh start."
+    },
+
+    "error_handling_and_safety": [
+      "Validate all input parameters on OnInit() — if any value is clearly invalid (e.g. ProfitTargetPct > MaxTotalDrawdownPct), print error and refuse to trade",
+      "Check IsTradeAllowed() and !IsTradeContextBusy() before every order request",
+      "Enforce minimum stop level from broker — SL/TP must be beyond MarketInfo STOPLEVEL",
+      "On order send failure: log the error code, wait 500ms, retry up to 3 times, then abort and alert",
+      "Max slippage: 3 pips on XAUUSD. If slippage exceeds this, cancel and do not retry",
+      "Handle TRADE_RETCODE_REQUOTE by resending at Ask/Bid with a 1-tick tolerance adjustment",
+      "If AccountEquity() drops more than 2% in under 5 minutes (extreme volatility), halt all trading for 30 minutes",
+      "Magic number must be unique per challenge instance to prevent order conflicts",
+      "Log every engine decision to the MT5 journal with timestamp, reason, and computed values"
+    ],
+
+    "technical_indicators": [
+      { "name": "EMA(200)", "timeframe": "H4",  "purpose": "Macro trend filter for trade direction" },
+      { "name": "EMA(50)",  "timeframe": "H4",  "purpose": "Mid-term structure support/resistance" },
+      { "name": "EMA(20)",  "timeframe": "M15", "purpose": "Short-term momentum reference" },
+      { "name": "ATR(14)",  "timeframe": "H4",  "purpose": "Volatility measurement, SL sizing, position sizing" },
+      { "name": "ATR(14)",  "timeframe": "M15", "purpose": "Intraday volatility for entry zone filtering" },
+      { "name": "RSI(14)",  "timeframe": "M5",  "purpose": "Divergence confirmation (optional confirmation layer)" },
+      { "name": "MACD(12,26,9)", "timeframe": "M15", "purpose": "Momentum cross as secondary entry confirmation" },
+      { "name": "Tick Volume", "timeframe": "M5", "purpose": "Confirm impulse moves vs fake-outs" }
+    ],
+
+    "backtesting_requirements": {
+      "data_quality": "99% tick modelling (Dukascopy data or MT5 native tick download)",
+      "test_period": "January 2023 – March 2026 (minimum — covers different market regimes)",
+      "spread": "Variable spread: 15–40 points for XAUUSD depending on session",
+      "commission": "$0 per lot round trip (commission-free account profile)",
+      "swap": "Enable overnight swap charges",
+      "scenarios_to_test": [
+        "$5,000 FTMO Phase 1 — 10% target, 5% DD, 30 days",
+        "$10,000 FTMO Phase 1",
+        "$25,000 FTMO Phase 1",
+        "$10,000 The5ers Phase 1 — with consistency rule enabled",
+        "$10,000 Apex — 3% daily DD, 6% total DD"
+      ],
+      "pass_criteria": {
+        "profit_factor": ">= 1.5",
+        "max_drawdown_in_backtest": "< 70% of the firm limit (must have buffer)",
+        "win_rate": "45–65%",
+        "avg_rr": ">= 1:2",
+        "monthly_return": "5–12% (must not exceed 15% to stay realistic)",
+        "sharpe_ratio": ">= 1.2",
+        "challenge_pass_rate_across_scenarios": "> 80% of simulated runs must pass the challenge"
+      }
+    },
+
+    "execution_quality_and_cost_model": {
+      "overview": "XAUUSD is an expensive instrument to trade. Every order carries spread cost, potential slippage, execution latency, commission, and overnight swap. The EA MUST account for ALL of these costs in every calculation — risk sizing, minimum RR filtering, profit tracking, and drawdown measurement. Ignoring any one of them leads to a strategy that looks profitable on paper but fails in live trading.",
+
+      "spread": {
+        "definition": "The difference between Ask and Buy price at the moment of entry. Gold spread is paid instantly on every trade open — it is an immediate loss.",
+        "realistic_values_xauusd": {
+          "London_session":      "15–25 points (typical ECN broker like IC Markets or Eightcap)",
+          "NY_session":          "15–30 points",
+          "Asian_session":       "30–60 points — one major reason Asian session is disabled by default",
+          "during_news_events":  "80–300+ points — can spike to $3.00+ per 0.01 lot; highly dangerous",
+          "market_open_monday":  "50–150 points — gap risk, EA must not trade within first 5 minutes of Monday open"
+        },
+        "how_EA_must_use_spread": [
+          "Read current spread on every tick: double spread = SymbolInfoInteger(symbol, SYMBOL_SPREAD) * point",
+          "If spread > MaxAllowedSpreadPoints (user-configurable, default 30), do NOT enter any trade — wait for spread to normalize",
+          "Add spread cost to the break-even calculation: entry must first recover spread before the trade is in profit",
+          "Adjust TP1 (1:1 RR) to account for spread: effective TP1 = EntryPrice + SL_Distance + (spread * 1.0) for longs",
+          "Minimum SL distance must be > spread * 2 to prevent SL and entry being simultaneously triggered",
+          "Log spread value at time of each entry in the trade journal for post-analysis"
+        ],
+        "input_parameter": {
+          "MaxAllowedSpreadPoints": { "type": "int", "default": 30, "description": "Maximum spread in points (0.1 pip units) to allow a new trade entry. Entry is blocked above this." }
+        }
+      },
+
+      "slippage": {
+        "definition": "The difference between the requested order price and the actual fill price. Occurs when market moves between order submission and broker execution.",
+        "causes": [
+          "High volatility — price moves rapidly after signal fires",
+          "News events — massive spike fills at extreme prices",
+          "Low liquidity — thin market during Asian session or pre-open",
+          "VPS latency — slow internet between EA and broker"
+        ],
+        "realistic_values_xauusd": {
+          "normal_conditions":   "1–5 points (0.1–0.5 pips) on ECN with low-latency VPS",
+          "elevated_volatility": "5–20 points",
+          "news_events":         "20–100+ points — can completely invalidate the trade setup",
+          "positive_slippage":   "Also possible — price improves, rare but happens on limit orders"
+        },
+        "how_EA_must_handle_slippage": [
+          "Set DEVIATION (slippage tolerance) in every OrderSend() request. Default: 30 points (3 pips equivalent for Gold)",
+          "If actual fill price deviates more than MaxSlippagePips from requested price, close the trade immediately at market and log the rejection",
+          "Use MqlTradeRequest.deviation field — never leave at 0 (zero tolerance = constant requotes)",
+          "After a fill, compare actual open price to requested price and store the slippage delta for tracking",
+          "If cumulative slippage this week exceeds a threshold ($X), log a warning and increase spread filter",
+          "NEVER trade during news windows — slippage is catastrophic and unpredictable",
+          "Prefer Limit Orders over Market Orders where setup allows — limit orders have zero positive slippage risk"
+        ],
+        "order_types_strategy": {
+          "market_orders": "Used for breakout entries and momentum entries at candle close. Subject to slippage.",
+          "buy_limit_buy_stop": "Used when entry zone is identified in advance (OB, FVG). Preferred — eliminates negative slippage on entry.",
+          "recommendation": "Use pending limit orders for Order Block and FVG entries wherever price has not yet touched the zone. Switch to market only for confirmed breakout entries."
+        },
+        "input_parameter": {
+          "MaxSlippagePoints": { "type": "int", "default": 30, "description": "Max fill deviation in points. Order rejected/closed if actual fill is worse than this vs requested price." }
+        }
+      },
+
+      "execution_delay_and_latency": {
+        "definition": "Time elapsed between the EA generating an order signal and the broker confirming the fill. During this window, price can move significantly.",
+        "components": {
+          "EA_processing_time":     "< 1ms — MQL5 compilation is fast, not a concern",
+          "VPS_to_broker_network":  "5–50ms on a good VPS near broker server. Can be 200–500ms on a home PC with unstable internet.",
+          "broker_processing_time": "10–100ms depending on broker infrastructure and order type",
+          "total_typical_delay":    "20–150ms in good conditions. 500ms+ in bad conditions."
+        },
+        "impact_on_trades": [
+          "At 150ms delay on XAUUSD with average volatility of $1/second, price may move 15+ points during execution",
+          "This effectively adds 1.5 pips of 'hidden slippage' to every market order in normal conditions",
+          "During news, price can move 50–200 points in 150ms — catastrophic for market orders near news"
+        ],
+        "how_EA_must_handle_latency": [
+          "The EA must measure round-trip latency on startup: send a test ping (AccountInfo request) and measure response time",
+          "Log measured latency to journal at startup: 'Broker RTT: 42ms'",
+          "If measured latency > 200ms, display a WARNING on the dashboard: 'HIGH LATENCY — execution quality degraded'",
+          "If latency > 500ms, block all new market order entries until latency improves",
+          "Use GetTickCount() before and after OrderSend() to measure actual execution time per trade",
+          "Account for delay in trailing stop logic: don't update SL too frequently (min 1-second intervals) to avoid broker-side rejection from excessive modification requests"
+        ],
+        "vps_requirements": {
+          "recommended_location": "Same data center as broker server (e.g., NY4 Equinix for IC Markets / Eightcap)",
+          "target_latency": "< 10ms round-trip to broker",
+          "minimum_specs": "1 vCPU, 1GB RAM, Windows Server 2016+, 20GB SSD",
+          "connection": "Stable dedicated connection — no residential ISP"
+        }
+      },
+
+      "commission": {
+        "definition": "A fixed fee charged per lot traded, applied at both open and close of the position. Separate from spread.",
+        "typical_values": {
+          "ECN_standard":        "$3.50 per lot per side = $7.00 round trip per lot",
+          "IC_Markets_raw":      "$3.50/lot/side ≈ $7.00 RT",
+          "Eightcap":            "$3.50/lot/side ≈ $7.00 RT",
+          "FTMO_broker":         "Varies — typically $7–$12 per lot round trip on Gold",
+          "zero_commission_acct":"Wider spread built in — still a cost, just embedded differently"
+        },
+        "impact_on_risk_calculations": [
+          "Commission reduces net profit on every winning trade and increases net loss on every losing trade",
+          "For a 0.01 lot XAUUSD trade: commission ≈ $0.07 RT — negligible",
+          "For a 0.10 lot trade: commission ≈ $0.70 RT",
+          "For a 1.00 lot trade: commission ≈ $7.00 RT — must be factored into breakeven and P&L tracking"
+        ],
+        "how_EA_must_handle_commission": [
+          "Read commission as: HistoryDealGetDouble(deal_ticket, DEAL_COMMISSION) after each closed trade",
+          "Include commission in ALL P&L tracking — daily P&L, total P&L, drawdown measurement",
+          "Adjust minimum RR threshold: minimum TP must cover SL + spread + commission to be a valid risk-reward trade",
+          "Effective breakeven point = Entry + SL_distance + SpreadCost + CommissionCost (in price terms)",
+          "For 1:2 RR, the gross TP target must actually be: 2 * SL + 2 * (spread + commission_per_lot * lots) to achieve TRUE 1:2 RR net of costs"
+        ],
+        "input_parameter": {
+          "CommissionPerLotRoundTrip": { "type": "double", "default": 0.0, "description": "Broker commission in USD per lot, round trip (open + close). Used in net P&L and RR calculations." }
+        }
+      },
+
+      "swap_overnight_fees": {
+        "definition": "Interest charged (or paid) for holding a position overnight, typically applied at 00:00 server time. Also called rollover.",
+        "xauusd_swap_reality": {
+          "direction":           "XAUUSD almost always has NEGATIVE swap on both long and short positions",
+          "typical_long_swap":   "-$3.50 to -$7.00 per lot per night",
+          "typical_short_swap":  "-$1.50 to -$4.00 per lot per night",
+          "triple_swap_wednesday": "Wednesday rollover is 3x the daily rate (covers weekend) — holding through Wednesday night is significantly more expensive",
+          "annual_equivalent":   "Approximately 5–15% per year annualized cost on a held Gold position"
+        },
+        "impact_on_challenge": [
+          "A 3-day held trade on 0.10 lots XAUUSD can accumulate $1.50–$2.10 in swap costs",
+          "This eats directly into the daily P&L and counts toward drawdown",
+          "For a $10,000 account with a $500 daily DD limit, a $2 swap is minor — but at $100K account and 5-lot position, swap overnight is $35+ per night"
+        ],
+        "how_EA_must_handle_swap": [
+          "Read open trade swap: PositionGetDouble(POSITION_SWAP) — this is real-time accrued swap on open positions",
+          "Include swap in total equity and P&L calculations — never ignore floating swap",
+          "Before holding a trade overnight: check if expected profit justifies the swap cost (profit must exceed swap by at least 2x)",
+          "On Wednesday: apply extra caution — consider closing profitable trades before 23:00 server time to avoid triple swap",
+          "Log swap paid on each closed trade: HistoryDealGetDouble(deal, DEAL_SWAP)",
+          "Account for cumulative swap when calculating challenge P&L — many traders get surprised when swap costs quietly erode their challenge progress"
+        ],
+        "input_parameter": {
+          "AvoidWednesdayOvernight": { "type": "bool", "default": true, "description": "Close all trades by 22:30 server time on Wednesday to avoid triple swap rollover" },
+          "MaxAllowedSwapPerTrade":   { "type": "double", "default": 5.0, "description": "Maximum swap exposure in USD per open trade before EA considers early exit" }
+        }
+      },
+
+      "net_cost_per_trade_model": {
+        "description": "The EA must compute the TOTAL COST of each trade in USD before deciding if it's worth taking. This prevents the strategy from taking low-RR trades where costs dominate.",
+        "formula": {
+          "TotalCostPerTrade_USD": "SpreadCost_USD + Commission_USD + EstimatedSlippage_USD + EstimatedSwap_USD",
+          "SpreadCost_USD":        "CurrentSpreadPoints * TickValue * Lots",
+          "Commission_USD":        "CommissionPerLotRT * Lots",
+          "EstimatedSlippage_USD": "AvgSlippagePoints * TickValue * Lots  (use rolling 20-trade average)",
+          "EstimatedSwap_USD":     "DailySwapRate * Lots * ExpectedHoldingDays  (0 if intraday trade)"
+        },
+        "minimum_viable_tp": {
+          "rule": "TP1 in USD must be > TotalCostPerTrade_USD * 3  (3:1 return vs cost is the minimum)",
+          "example": "0.10 lots | Spread $0.25 | Commission $0.00 | Slippage est $0.15 | Swap $0 = Total cost $0.40. TP1 must deliver > $1.20 net minimum.",
+          "enforcement": "If setup's expected net profit (after all costs) does not meet minimum, the trade is SKIPPED regardless of setup score"
+        }
+      },
+
+      "partial_fill_handling": {
+        "description": "Brokers may partially fill large orders when liquidity is insufficient. The EA must handle this gracefully.",
+        "rules": [
+          "After OrderSend(), check PositionGetDouble(POSITION_VOLUME) vs requested volume",
+          "If filled volume < 50% of requested: close the partial fill immediately (trade RR is now invalidated by cost structure)",
+          "If filled volume >= 50%: accept the fill, adjust SL/TP calculations to the actual volume",
+          "Log all partial fills with original requested size vs actual fill size",
+          "Do not retry the unfilled portion — it indicates the market lacked liquidity at that level"
+        ]
+      },
+
+      "requote_handling": {
+        "description": "A requote occurs when the broker cannot fill the order at the requested price and proposes a new price.",
+        "mql5_error_code": "TRADE_RETCODE_REQUOTE (10004)",
+        "strategy": [
+          "On first requote: re-evaluate current spread and price — if setup still valid, resend with updated price and +10 points extra deviation",
+          "On second consecutive requote for same setup: skip the trade entirely — market conditions are too unstable",
+          "Log every requote with timestamp so user can identify patterns (e.g., always requoting at London open → increase deviation setting)",
+          "Never accept a requoted price that is worse than the original SL-adjusted entry threshold"
+        ]
+      },
+
+      "cost_aware_drawdown_accounting": {
+        "critical_rule": "Every cost — spread, commission, slippage, swap — must be included in the EA's drawdown tracking. The funded firm's drawdown limit does not distinguish between 'real losses' and 'costs'. A $50 commission loss is the same as a $50 stop-loss hit to the firm's rules.",
+        "implementation": [
+          "Use AccountEquity() for all drawdown calculations — equity already reflects floating swap, unrealized P&L",
+          "Track daily drawdown as: (DayStartEquity - Min(AccountEquity() during day)) — this automatically includes all costs",
+          "Do NOT use AccountBalance() alone for drawdown — it misses floating swap and unrealized losses",
+          "After each trade close, reconcile: TotalCosts += (OpenPrice - ClosePrice adjusted for direction) - NetPnL from deal history"
+        ]
+      },
+
+      "execution_cost_dashboard_additions": {
+        "description": "Add a cost tracker section to the on-chart dashboard so the user sees exactly what the EA is spending on execution.",
+        "display_elements": [
+          "Current Spread:        22 pts  [OK]  /  Max: 30 pts",
+          "Est. Slippage Avg:     3.2 pts  (last 20 trades)",
+          "Commission Paid Today: $1.40",
+          "Swap Accrued Today:    -$0.48",
+          "Total Costs Today:     $1.88  (of $86.20 gross PnL = 2.2% drag)",
+          "Net PnL Today:         $84.32",
+          "Broker RTT Latency:    18ms  [OK]"
+        ]
+      }
+    },
+
+    "development_standards": {
+      "code_architecture": {
+        "main_file": "FundedEA.mq5",
+        "modules": [
+          { "file": "Include/FundedEA/ChallengeEngine.mqh",    "role": "Core self-optimization engine — computes all dynamic parameters daily" },
+          { "file": "Include/FundedEA/RiskManager.mqh",        "role": "Position sizing, drawdown monitoring, halt logic" },
+          { "file": "Include/FundedEA/StrategyEngine.mqh",     "role": "Setup detection, scoring, entry/exit logic" },
+          { "file": "Include/FundedEA/OrderManager.mqh",       "role": "Order sending, modification, partial close, trailing, requote/slippage handling" },
+          { "file": "Include/FundedEA/CostModel.mqh",          "role": "Spread monitoring, slippage tracking, commission/swap accounting, net P&L computation" },
+          { "file": "Include/FundedEA/SessionManager.mqh",     "role": "Session filtering, news shield, Friday/Wednesday close" },
+          { "file": "Include/FundedEA/Dashboard.mqh",          "role": "On-chart panel rendering, cost tracker section, real-time updates" },
+          { "file": "Include/FundedEA/StatePersistence.mqh",   "role": "Save/restore EA state via GlobalVariables" },
+          { "file": "Include/FundedEA/FirmPresets.mqh",        "role": "Funded firm rule profiles and preset loader" },
+          { "file": "Include/FundedEA/Utils.mqh",              "role": "Logging, time helpers, math utilities, latency measurement" }
+        ]
+      },
+      "coding_standards": [
+        "MQL5 OOP with classes for each module — no monolithic code",
+        "#property strict enforced",
+        "All configurable values via input parameters — no hardcoded magic numbers",
+        "Every function documented with: Purpose, Parameters, Returns, Side Effects",
+        "Use enums for AggressivenessLevel, Phase, FirmPreset, SessionState, OrderRejectionReason",
+        "Semantic versioning: MAJOR.MINOR.PATCH in #define EA_VERSION",
+        "All monetary calculations use double precision — never int arithmetic for P&L or lot sizes"
+      ],
+      "live_deployment_notes": [
+        "Test with the exact broker specified by the funded firm (IC Markets, Eightcap, etc.)",
+        "Verify XAUUSD symbol name matches broker (GOLD, XAUUSDm, XAUUSD.) — wrong symbol name silently breaks everything",
+        "Confirm server timezone offset — adjust ServerTimezoneOffsetHours accordingly (UTC+2 winter, UTC+3 summer for most EU brokers)",
+        "Run on VPS located near broker data center — target < 10ms RTT",
+        "Never run simultaneously with another EA on the same account — Magic Number conflicts and margin issues",
+        "Monitor first 3 days of live operation manually to confirm engine decisions, cost model output, and slippage are within expected ranges",
+        "Check spread on the live account before the first trade — demo spreads often differ from real account spreads"
+      ]
+    }
+  }
+}
