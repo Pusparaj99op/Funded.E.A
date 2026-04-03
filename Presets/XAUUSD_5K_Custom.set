@@ -1,0 +1,54 @@
+; Funded.E.A v2.0.0 - Preset File
+; ────────────────────────────────────────────
+; Account: $5,000 | Leverage: 1:30
+; Daily DD: 3% ($150) | Total DD: 5% ($250)
+; Profit Target: 8% ($400)
+; Firm: Custom
+; ────────────────────────────────────────────
+; Generated: 2026-04-03
+;
+; NOTES:
+;   - These tight DD limits (3%/5%) require ultra-conservative behavior.
+;   - With 1:30 leverage on XAUUSD, max lot ~0.06-0.08 per trade.
+;   - The engine will auto-derive risk to ~0.25-0.50% per trade.
+;   - Expected to need 20-25 trading days at a balanced pace.
+
+; ═══════ Challenge Parameters ═══════
+InpAccountSize=5000.0
+InpFirmPreset=5
+InpProfitTargetPct=8.0
+InpMaxDailyDrawdownPct=3.0
+InpMaxTotalDrawdownPct=5.0
+InpMinTradingDays=5
+InpTotalChallengeDays=30
+InpCurrentPhase=0
+InpConsistencyRuleEnabled=false
+InpMaxSingleDayProfitPct=40.0
+
+; ═══════ Advanced Overrides ═══════
+InpForceRiskPerTrade=0.0
+InpForceMaxTradesPerDay=0
+InpDisableAcceleratedMode=false
+InpMagicNumber=205000
+InpMaxSlippagePips=3
+
+; ═══════ Session Settings ═══════
+InpTradeLondon=true
+InpTradeNewYork=true
+InpTradeAsian=false
+InpAvoidNewsEvents=true
+InpNewsBufferMinutes=30
+InpCloseAllOnFriday=true
+InpFridayCloseHourGMT=20
+InpServerTimezoneOffset=2
+
+; ═══════ Execution & Cost Settings ═══════
+InpMaxAllowedSpreadPoints=30
+InpCommissionPerLotRT=0.0
+InpAvoidWednesdayOvernight=true
+InpMaxAllowedSwapPerTrade=3.0
+
+; ═══════ Dashboard Settings ═══════
+InpShowDashboard=true
+InpDashboardCorner=1
+InpDashboardFontSize=10
